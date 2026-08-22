@@ -1,0 +1,1 @@
+// DayOut place types will be defined here.

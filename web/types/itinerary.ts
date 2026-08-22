@@ -1,0 +1,1 @@
+// DayOut itinerary types will be defined here.

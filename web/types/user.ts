@@ -1,0 +1,1 @@
+// DayOut user types will be defined here.
