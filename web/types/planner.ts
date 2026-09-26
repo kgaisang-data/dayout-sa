@@ -1,9 +1,12 @@
-export type PlannerInput = {
+export type PlannerPreferences = {
   location: string;
   budget: number;
   groupSize: number;
-  availableHours: number;
+  availableMinutes: number;
   vibes: string[];
 };
 
-export type PlannerPreferences = PlannerInput;
+// The existing recommendation API still accepts hours at its boundary.
+export type PlannerInput = Omit<PlannerPreferences, "availableMinutes"> & {
+  availableHours: number;
+};

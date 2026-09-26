@@ -1,68 +1,76 @@
+import { createClient } from "@/lib/supabase/client";
 import type { Place } from "@/types/place";
 
+export async function loadPlaces(): Promise<Place[]> {
+  try {
+    const supabase = createClient();
+
+    const { data, error } = await supabase
+      .from("places")
+      .select(
+        "id, name, description, category, area, estimated_cost_per_person, duration_minutes, vibes, local_business, hidden_gem"
+      )
+      .eq("is_active", true)
+      .order("name")
+      .returns<Place[]>();
+
+    if (error) throw error;
+
+    return data ?? [];
+  } catch {
+    // Keep database details and connection information out of caller-facing errors.
+    throw new Error("Unable to load places. Please try again.");
+  }
+}
+
+// Retained for the existing recommendation API until it uses loadPlaces.
 export const samplePlaces: Place[] = [
   {
     id: "1",
     name: "Wits Art Museum",
     category: "museum",
-    estimated_cost: 80,
-    duration: 90,
+    estimated_cost_per_person: 80,
+    duration_minutes: 90,
     vibes: ["artsy", "chill", "culture"],
-    latitude: -26.1936,
-    longitude: 28.0305,
-    location: "Braamfontein",
+    area: "Braamfontein",
     description: "Contemporary African art museum",
-    opening_time: "09:00",
-    closing_time: "17:00",
-    indoor_outdoor: "indoor",
-    image_url: "",
+    local_business: false,
+    hidden_gem: false,
   },
   {
     id: "2",
     name: "Neighbourgoods Market",
     category: "restaurant",
-    estimated_cost: 150,
-    duration: 60,
+    estimated_cost_per_person: 150,
+    duration_minutes: 60,
     vibes: ["foodie", "chill", "culture"],
-    latitude: -26.1889,
-    longitude: 28.0353,
-    location: "Braamfontein",
+    area: "Braamfontein",
     description: "Food and craft market",
-    opening_time: "09:00",
-    closing_time: "17:00",
-    indoor_outdoor: "indoor",
-    image_url: "",
+    local_business: true,
+    hidden_gem: false,
   },
   {
     id: "3",
     name: "44 Stanley",
     category: "shopping",
-    estimated_cost: 200,
-    duration: 90,
+    estimated_cost_per_person: 200,
+    duration_minutes: 90,
     vibes: ["chill", "artsy", "foodie"],
-    latitude: -26.1875,
-    longitude: 28.0289,
-    location: "Braamfontein",
+    area: "Braamfontein",
     description: "Precinct with shops and restaurants",
-    opening_time: "09:00",
-    closing_time: "18:00",
-    indoor_outdoor: "both",
-    image_url: "",
+    local_business: true,
+    hidden_gem: false,
   },
   {
     id: "4",
     name: "Johannesburg Botanical Garden",
     category: "park",
-    estimated_cost: 50,
-    duration: 90,
+    estimated_cost_per_person: 50,
+    duration_minutes: 90,
     vibes: ["chill", "outdoors", "romantic"],
-    latitude: -26.1572,
-    longitude: 28.0078,
-    location: "Emmarentia",
+    area: "Emmarentia",
     description: "Large botanical garden with walking trails",
-    opening_time: "08:00",
-    closing_time: "17:00",
-    indoor_outdoor: "outdoor",
-    image_url: "",
+    local_business: false,
+    hidden_gem: false,
   },
 ];

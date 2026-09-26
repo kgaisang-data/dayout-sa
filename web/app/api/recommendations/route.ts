@@ -7,7 +7,10 @@ export async function POST(request: NextRequest) {
   try {
     const body: PlannerInput = await request.json();
     
-    const plans = getRecommendedPlans(body, samplePlaces);
+    const plans = getRecommendedPlans(
+      { ...body, availableMinutes: body.availableHours * 60 },
+      samplePlaces
+    );
     
     return NextResponse.json({ plans });
   } catch (error) {
