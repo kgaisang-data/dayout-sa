@@ -1,7 +1,9 @@
-export type PlannerPreferences = {
+export type PlannerInput = {
   location: string;
   budget: number;
   groupSize: number;
-  availableMinutes: number;
+  availableHours: number;
   vibes: string[];
 };
+
+export type PlannerPreferences = PlannerInput;
