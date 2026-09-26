@@ -1,220 +1,346 @@
-import type { PlannerPreferences } from "@/types/planner";
+import type { RecommendedPlan, PlanType } from "@/types/itinerary";
 import type { Place } from "@/types/place";
-import type { RecommendedPlan } from "@/types/itinerary";
+import type { PlannerPreferences } from "@/types/planner";
 
-export type PlanType = "local-easy" | "budget" | "hidden-gems";
-
-// Temporary estimate until routing supplies travel times between venues.
 export const TRANSFER_MINUTES = 15;
-const MAX_STOPS = 4;
+export const MAX_STOPS = 4;
 
-const strategies: { id: PlanType; title: string; label: string }[] = [
-  { id: "local-easy", title: "Local & Easy", label: "Best Match" },
-  { id: "budget", title: "Best on a Budget", label: "Lowest-cost option" },
-  { id: "hidden-gems", title: "Hidden Gems", label: "Something Different" },
-];
-
-type Candidate = {
-  place: Place;
-  costCents: number;
-  groupCostCents: number;
-  vibeMatches: number;
-  areaMatch: number;
+export const PLAN_META: Record<
+  PlanType,
+  { title: string; label: string; description: string }
+> = {
+  "local-easy": {
+    title: "Local & Easy",
+    label: "Best Match",
+    description:
+      "A practical mix of places that best matches your selected vibe, budget and starting area.",
+  },
+  budget: {
+    title: "Best on a Budget",
+    label: "Lowest-cost option",
+    description:
+      "A lower-cost route that prioritises affordable experiences while still giving you a complete day out.",
+  },
+  "hidden-gems": {
+    title: "Hidden Gems",
+    label: "Something Different",
+    description:
+      "A more local-first route that gives extra preference to hidden gems and small or independent businesses.",
+  },
 };
 
-function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/[-\s]+/g, " ");
+export function normaliseTag(value: string) {
+  return value.toLowerCase().trim().replaceAll("-", " ").replaceAll("_", " ");
 }
 
-function compareCandidates(a: Candidate, b: Candidate, strategy: PlanType) {
-  const vibes = b.vibeMatches - a.vibeMatches;
-  const area = b.areaMatch - a.areaMatch;
-  const local = Number(b.place.local_business) - Number(a.place.local_business);
-  const cost = a.costCents - b.costCents;
+function vibeMatches(place: Place, selectedVibes: string[]) {
+  const selected = new Set(selectedVibes.map(normaliseTag));
+  return place.vibes.filter((vibe) => selected.has(normaliseTag(vibe))).length;
+}
 
-  let priority: number;
-  if (strategy === "budget") {
-    // Zero-cost venues sort first, then cheaper venues, then relevance.
-    priority = cost || vibes || area || local;
-  } else if (strategy === "hidden-gems") {
-    const hidden = Number(b.place.hidden_gem) - Number(a.place.hidden_gem);
-    priority = hidden || local || vibes || area || cost;
-  } else {
-    priority = vibes || area || local || cost;
+function locationMatches(place: Place, location: string) {
+  const selectedLocation = normaliseTag(location);
+  if (!selectedLocation || selectedLocation === "johannesburg") {
+    return false;
   }
 
-  return (
-    priority ||
-    a.place.duration_minutes - b.place.duration_minutes ||
-    a.place.name.localeCompare(b.place.name) ||
-    a.place.id.localeCompare(b.place.id)
-  );
+  return normaliseTag(place.area).includes(selectedLocation);
 }
 
-function formatRand(amount: number): string {
-  return `R${amount.toFixed(2).replace(/\.00$/, "")}`;
-}
-
-function buildReasons(
-  strategy: PlanType,
-  stops: Place[],
+function scorePlace(
+  place: Place,
   preferences: PlannerPreferences,
-  selectedVibes: string[],
-  preferredArea: string,
-  totalCost: number,
-  duration: number,
-  travelTime: number
-): string[] {
-  const reasons = [
-    `${formatRand(totalCost)} in venue costs for ${preferences.groupSize} people fits your ${formatRand(preferences.budget)} group budget; transport costs are excluded.`,
-    `${duration} minutes fits your ${preferences.availableMinutes}-minute limit: ${duration - travelTime} minutes at venues and ${travelTime} estimated travel minutes (${TRANSFER_MINUTES} minutes between stops).`,
+  mode: PlanType
+) {
+  const matchedVibes = vibeMatches(place, preferences.vibes);
+  let score = matchedVibes * 24;
+
+  if (locationMatches(place, preferences.location)) {
+    score += 20;
+  }
+
+  // Local businesses matter across all plans because DayOut is entered under
+  // the Street Economy challenge.
+  if (place.local_business) {
+    score += 10;
+  }
+
+  if (mode === "local-easy") {
+    score += matchedVibes * 12;
+    if (place.estimated_cost_per_person <= preferences.budget / preferences.groupSize) {
+      score += 8;
+    }
+  }
+
+  if (mode === "budget") {
+    if (place.estimated_cost_per_person === 0) {
+      score += 45;
+    } else if (place.estimated_cost_per_person <= 75) {
+      score += 35;
+    } else if (place.estimated_cost_per_person <= 150) {
+      score += 22;
+    } else if (place.estimated_cost_per_person <= 250) {
+      score += 10;
+    }
+  }
+
+  if (mode === "hidden-gems") {
+    if (place.hidden_gem) {
+      score += 45;
+    }
+    if (place.local_business) {
+      score += 18;
+    }
+    if (place.vibes.some((vibe) => normaliseTag(vibe) === "hidden gems")) {
+      score += 15;
+    }
+  }
+
+  return score;
+}
+
+export function calculatePlanMetrics(
+  stops: Place[],
+  groupSize: number
+) {
+  const safeGroupSize = Math.max(1, groupSize);
+
+  const totalCost = stops.reduce(
+    (total, place) =>
+      total + Number(place.estimated_cost_per_person) * safeGroupSize,
+    0
+  );
+
+  const venueMinutes = stops.reduce(
+    (total, place) => total + Number(place.duration_minutes),
+    0
+  );
+
+  const travelMinutes = Math.max(0, stops.length - 1) * TRANSFER_MINUTES;
+
+  return {
+    totalCost,
+    costPerPerson: totalCost / safeGroupSize,
+    venueMinutes,
+    travelMinutes,
+    durationMinutes: venueMinutes + travelMinutes,
+  };
+}
+
+function buildPlan(
+  mode: PlanType,
+  places: Place[],
+  preferences: PlannerPreferences
+): RecommendedPlan | null {
+  const ranked = [...places]
+    .map((place) => ({
+      place,
+      score: scorePlace(place, preferences, mode),
+    }))
+    .sort((a, b) => {
+      // The budget plan deliberately starts from price so it does not collapse
+      // into the same set of places as Best Match when several places share
+      // the same vibes.
+      if (mode === "budget") {
+        const costDifference =
+          a.place.estimated_cost_per_person - b.place.estimated_cost_per_person;
+        if (costDifference !== 0) return costDifference;
+      }
+
+      if (b.score !== a.score) return b.score - a.score;
+
+      // Stable, predictable tie-breaking is useful for repeatable demos.
+      return a.place.name.localeCompare(b.place.name);
+    });
+
+  const selected: Place[] = [];
+  const stopLimit = mode === "hidden-gems" ? 3 : MAX_STOPS;
+
+  for (const candidate of ranked) {
+    if (selected.length >= stopLimit) break;
+
+    // Avoid an itinerary made almost entirely from one type of venue.
+    const sameCategoryCount = selected.filter(
+      (place) => normaliseTag(place.category) === normaliseTag(candidate.place.category)
+    ).length;
+    if (sameCategoryCount >= 2) continue;
+
+    const proposedStops = [...selected, candidate.place];
+    const metrics = calculatePlanMetrics(proposedStops, preferences.groupSize);
+
+    if (metrics.totalCost > preferences.budget) continue;
+    if (metrics.durationMinutes > preferences.availableMinutes) continue;
+
+    selected.push(candidate.place);
+  }
+
+  if (selected.length < 2) {
+    return null;
+  }
+
+  const metrics = calculatePlanMetrics(selected, preferences.groupSize);
+  const localCount = selected.filter((place) => place.local_business).length;
+  const hiddenCount = selected.filter((place) => place.hidden_gem).length;
+  const matchedVibeStops = selected.filter(
+    (place) => vibeMatches(place, preferences.vibes) > 0
+  ).length;
+
+  const reasons: string[] = [
+    `Estimated venue spend is R${metrics.totalCost.toFixed(0)}, within your R${preferences.budget} group budget.`,
   ];
 
-  const matchedVibes = selectedVibes.filter((vibe) =>
-    stops.some((place) => place.vibes.some((tag) => normalize(tag) === vibe))
-  );
-  if (matchedVibes.length > 0) {
-    reasons.push(`Matches your selected vibes: ${matchedVibes.join(", ")}.`);
-  } else if (selectedVibes.length > 0) {
-    reasons.push("No selected stop matches your chosen vibes; this option fits your budget and time.");
-  }
-
-  if (preferredArea) {
-    const areaStops = stops.filter((place) => normalize(place.area) === preferredArea);
+  if (matchedVibeStops > 0) {
     reasons.push(
-      areaStops.length > 0
-        ? `In your preferred area, ${preferences.location.trim()}: ${areaStops.map((place) => place.name).join(", ")}.`
-        : `Selected areas: ${[...new Set(stops.map((place) => place.area))].join(", ")}; no selected stop is in ${preferences.location.trim()}.`
+      `${matchedVibeStops} stop${matchedVibeStops === 1 ? "" : "s"} match your selected vibe${preferences.vibes.length === 1 ? "" : "s"}.`
     );
   }
 
-  const localStops = stops.filter((place) => place.local_business);
-  if (localStops.length > 0) {
-    reasons.push(`Supports local businesses: ${localStops.map((place) => place.name).join(", ")}.`);
-  }
-
-  if (strategy === "budget") {
-    const freeStops = stops.filter((place) => place.estimated_cost_per_person === 0);
+  if (localCount > 0) {
     reasons.push(
-      freeStops.length > 0
-        ? `Includes free venues: ${freeStops.map((place) => place.name).join(", ")}.`
-        : `Prioritises lower-cost venues, starting at ${formatRand(Math.min(...stops.map((place) => place.estimated_cost_per_person)))} per person.`
+      `Includes ${localCount} local or small-business stop${localCount === 1 ? "" : "s"}.`
     );
   }
 
-  if (strategy === "hidden-gems") {
-    const hiddenStops = stops.filter((place) => place.hidden_gem);
+  if (mode === "budget") {
+    reasons.push("Prioritises free and lower-cost places before more expensive options.");
+  }
+
+  if (mode === "hidden-gems") {
     reasons.push(
-      hiddenStops.length > 0
-        ? `Discovers hidden gems: ${hiddenStops.map((place) => place.name).join(", ")}.`
-        : "No selected venue is tagged as a hidden gem; this option uses local-business and vibe preferences."
+      hiddenCount > 0
+        ? `Includes ${hiddenCount} place${hiddenCount === 1 ? "" : "s"} marked as a hidden gem.`
+        : "Prioritises local-first places when dedicated hidden-gem options are limited."
     );
   }
 
-  return reasons;
+  if (locationMatches(selected[0], preferences.location)) {
+    reasons.push(`Starts with a place in or near ${preferences.location}.`);
+  }
+
+  const meta = PLAN_META[mode];
+
+  return {
+    id: mode,
+    title: meta.title,
+    label: meta.label,
+    stops: selected,
+    totalCost: metrics.totalCost,
+    costPerPerson: metrics.costPerPerson,
+    durationMinutes: metrics.durationMinutes,
+    travelMinutes: metrics.travelMinutes,
+    remainingBudget: preferences.budget - metrics.totalCost,
+    reasons,
+  };
+}
+
+function signature(plan: RecommendedPlan) {
+  return plan.stops
+    .map((place) => place.id)
+    .sort()
+    .join("|");
 }
 
 export function getRecommendedPlans(
   preferences: PlannerPreferences,
   places: Place[]
 ): RecommendedPlan[] {
-  if (
-    !Number.isFinite(preferences.budget) || preferences.budget < 0 ||
-    !Number.isSafeInteger(preferences.groupSize) || preferences.groupSize < 1 ||
-    !Number.isFinite(preferences.availableMinutes) || preferences.availableMinutes <= 0
-  ) {
-    return [];
+  const modes: PlanType[] = ["local-easy", "budget", "hidden-gems"];
+  const uniquePlans: RecommendedPlan[] = [];
+  const seen = new Set<string>();
+
+  for (const mode of modes) {
+    const plan = buildPlan(mode, places, preferences);
+    if (!plan) continue;
+
+    const key = signature(plan);
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    uniquePlans.push(plan);
   }
 
-  const selectedVibes = [...new Set(preferences.vibes.map(normalize).filter(Boolean))];
-  const location = normalize(preferences.location);
-  // Johannesburg means the entire pilot, rather than a specific neighbourhood.
-  const preferredArea = location === "johannesburg" ? "" : location;
-  const seenPlaceIds = new Set<string>();
-  const candidates: Candidate[] = [];
+  return uniquePlans;
+}
 
-  for (const place of places) {
-    if (
-      !place.id || seenPlaceIds.has(place.id) ||
-      !Number.isFinite(place.estimated_cost_per_person) || place.estimated_cost_per_person < 0 ||
-      !Number.isSafeInteger(place.duration_minutes) || place.duration_minutes <= 0
-    ) {
-      continue;
-    }
+/**
+ * Finds a real Supabase place to replace one itinerary stop. The replacement
+ * must keep the itinerary inside the original budget and available time.
+ */
+export function findSwapAlternative(
+  currentIndex: number,
+  currentStops: Place[],
+  candidates: Place[],
+  preferences: PlannerPreferences
+): Place | null {
+  const current = currentStops[currentIndex];
+  if (!current) return null;
 
-    // The database stores two decimal places. Sum integer cents to avoid drift.
-    const costCents = Math.round(place.estimated_cost_per_person * 100);
-    const groupCostCents = costCents * preferences.groupSize;
-    if (
-      !Number.isSafeInteger(groupCostCents) ||
-      groupCostCents / 100 > preferences.budget ||
-      place.duration_minutes > preferences.availableMinutes
-    ) {
-      continue;
-    }
+  const usedIds = new Set(currentStops.map((place) => place.id));
 
-    seenPlaceIds.add(place.id);
-    const placeVibes = new Set(place.vibes.map(normalize));
-    candidates.push({
-      place,
-      costCents,
-      groupCostCents,
-      vibeMatches: selectedVibes.filter((vibe) => placeVibes.has(vibe)).length,
-      areaMatch: Number(Boolean(preferredArea) && normalize(place.area) === preferredArea),
-    });
-  }
+  const ranked = candidates
+    .filter((place) => !usedIds.has(place.id))
+    .map((place) => {
+      let score = 0;
 
-  const plans: RecommendedPlan[] = [];
-  const seenPlans = new Set<string>();
-
-  for (const strategy of strategies) {
-    const ranked = [...candidates].sort((a, b) => compareCandidates(a, b, strategy.id));
-    const stops: Place[] = [];
-    let totalCostCents = 0;
-    let duration = 0;
-
-    for (const candidate of ranked) {
-      if (stops.length === MAX_STOPS) break;
-
-      const nextCostCents = totalCostCents + candidate.groupCostCents;
-      const nextDuration = duration + candidate.place.duration_minutes +
-        (stops.length > 0 ? TRANSFER_MINUTES : 0);
-      if (
-        !Number.isSafeInteger(nextCostCents) ||
-        nextCostCents / 100 > preferences.budget ||
-        nextDuration > preferences.availableMinutes
-      ) {
-        continue;
+      if (normaliseTag(place.category) === normaliseTag(current.category)) {
+        score += 35;
       }
 
-      stops.push(candidate.place);
-      totalCostCents = nextCostCents;
-      duration = nextDuration;
-    }
+      score += vibeMatches(place, preferences.vibes) * 18;
 
-    if (stops.length === 0) continue;
+      if (locationMatches(place, preferences.location)) score += 12;
+      if (place.local_business) score += 10;
+      if (place.hidden_gem) score += 6;
 
-    // Different stop orders do not make the same set of venues a new option.
-    const planKey = JSON.stringify(stops.map((place) => place.id).sort());
-    if (seenPlans.has(planKey)) continue;
-    seenPlans.add(planKey);
+      const costDifference = Math.abs(
+        place.estimated_cost_per_person - current.estimated_cost_per_person
+      );
+      score -= costDifference / 15;
 
-    const totalCost = totalCostCents / 100;
-    const travelTime = (stops.length - 1) * TRANSFER_MINUTES;
-    plans.push({
-      ...strategy,
-      stops,
-      totalCost,
-      costPerPerson: totalCostCents / preferences.groupSize / 100,
-      duration,
-      travelTime,
-      remainingBudget: Math.round((preferences.budget - totalCost) * 100) / 100,
-      reasons: buildReasons(
-        strategy.id, stops, preferences, selectedVibes, preferredArea,
-        totalCost, duration, travelTime
-      ),
+      return { place, score };
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.place.name.localeCompare(b.place.name);
     });
+
+  for (const candidate of ranked) {
+    const proposed = [...currentStops];
+    proposed[currentIndex] = candidate.place;
+
+    const metrics = calculatePlanMetrics(proposed, preferences.groupSize);
+    if (
+      metrics.totalCost <= preferences.budget &&
+      metrics.durationMinutes <= preferences.availableMinutes
+    ) {
+      return candidate.place;
+    }
   }
 
-  return plans;
+  return null;
+}
+
+export function formatMinutes(totalMinutes: number) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours === 0) return `${minutes} min`;
+  if (minutes === 0) return `${hours} hr${hours === 1 ? "" : "s"}`;
+
+  return `${hours} hr${hours === 1 ? "" : "s"} ${minutes} min`;
+}
+
+export function buildStopTimes(stops: Place[], startHour = 10, startMinute = 30) {
+  let elapsed = startHour * 60 + startMinute;
+
+  return stops.map((stop, index) => {
+    if (index > 0) elapsed += TRANSFER_MINUTES;
+
+    const hours = Math.floor(elapsed / 60) % 24;
+    const minutes = elapsed % 60;
+    const time = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+
+    elapsed += stop.duration_minutes;
+    return time;
+  });
 }

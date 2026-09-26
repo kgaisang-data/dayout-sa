@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "DayOut South Africa | What are we doing today?",
   description:
-    "A budget-aware day-out planner for local tourism experiences in Johannesburg, South Africa.",
+    "A budget-aware day-out planner that helps people discover Johannesburg places and local businesses.",
 };
 
 export default function RootLayout({

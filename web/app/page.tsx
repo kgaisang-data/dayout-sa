@@ -18,7 +18,7 @@ export default function HomePage() {
 
       <section className="mx-auto flex max-w-6xl flex-col justify-center px-6 pb-16 pt-12 md:min-h-[75vh]">
         <p className="mb-4 text-sm font-semibold uppercase tracking-[0.2em] text-orange-500">
-          Tourism Solutions • Build for Use
+          Street Economy • Build for Use
         </p>
 
         <h1 className="max-w-4xl text-5xl font-bold tracking-tight text-[#4b2aad] md:text-7xl">
@@ -32,7 +32,7 @@ export default function HomePage() {
 
         <p className="mt-4 max-w-2xl text-base leading-7 text-slate-500">
           Stop searching across TikTok, Google Maps, Instagram and group chats.
-          Tell us what your day looks like and get options you can actually use.
+          Tell us what your day looks like and get options you can actually use while discovering more local places and businesses.
         </p>
 
         <div className="mt-8 flex flex-wrap gap-4">

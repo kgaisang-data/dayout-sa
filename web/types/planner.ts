@@ -6,7 +6,5 @@ export type PlannerPreferences = {
   vibes: string[];
 };
 
-// The existing recommendation API still accepts hours at its boundary.
-export type PlannerInput = Omit<PlannerPreferences, "availableMinutes"> & {
-  availableHours: number;
-};
+// Backwards-compatible alias used by a few existing files.
+export type PlannerInput = PlannerPreferences;

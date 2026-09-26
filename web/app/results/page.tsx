@@ -3,101 +3,150 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { loadPlaces } from "@/data/places";
-import { getRecommendedPlans } from "@/lib/recommendation-engine";
-import type { PlannerPreferences } from "@/types/planner";
+import { formatMinutes } from "@/lib/recommendation-engine";
 import type { RecommendedPlan } from "@/types/itinerary";
 
-type ParsedPreferences =
-  | { preferences: PlannerPreferences; error: null }
-  | { preferences: null; error: string };
+function ResultsContent() {
+  const searchParams = useSearchParams();
 
-type ResultsState =
-  | { status: "loading" }
-  | { status: "error" }
-  | { status: "ready"; plans: RecommendedPlan[] };
+  const location = searchParams.get("location") ?? "Johannesburg";
+  const parsedBudget = Number(searchParams.get("budget") ?? 800);
+  const parsedGroupSize = Number(searchParams.get("groupSize") ?? 4);
+  const parsedTime = Number(searchParams.get("time") ?? 360);
+  const rawVibes = searchParams.get("vibes") ?? "chill,foodie";
 
-function parsePreferences(query: string): ParsedPreferences {
-  const params = new URLSearchParams(query);
-  const numberParam = (name: string, fallback: number) => {
-    const value = params.get(name);
-    if (value === null) return fallback;
-    return value.trim() === "" ? NaN : Number(value);
-  };
-
-  const budget = numberParam("budget", 800);
-  const groupSize = numberParam("groupSize", 4);
-  const availableMinutes = numberParam("time", 360);
-
-  if (!Number.isFinite(budget) || budget < 0 || budget > Number.MAX_SAFE_INTEGER / 100) {
-    return { preferences: null, error: "Enter a valid total group budget of R0 or more." };
-  }
-  if (!Number.isSafeInteger(groupSize) || groupSize < 1 || groupSize > 20) {
-    return { preferences: null, error: "Choose a whole group size between 1 and 20 people." };
-  }
-  if (!Number.isSafeInteger(availableMinutes) || availableMinutes <= 0) {
-    return { preferences: null, error: "Choose a positive whole number of minutes for your day out." };
-  }
-
-  return {
-    preferences: {
-      location: params.get("location")?.trim() || "Johannesburg",
-      budget,
-      groupSize,
-      availableMinutes,
-      vibes: [...new Set(
-        (params.get("vibes") ?? "chill,foodie")
-          .split(",")
-          .map((vibe) => vibe.trim().toLowerCase().replace(/[-\s]+/g, " "))
-          .filter(Boolean)
-      )],
-    },
-    error: null,
-  };
-}
-
-function formatDuration(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  const parts = [];
-  if (hours > 0) parts.push(`${hours} hour${hours === 1 ? "" : "s"}`);
-  if (remainingMinutes > 0) {
-    parts.push(`${remainingMinutes} minute${remainingMinutes === 1 ? "" : "s"}`);
-  }
-  return parts.join(" ") || "0 minutes";
-}
-
-function formatAmount(amount: number): string {
-  return amount.toLocaleString("en-ZA", { maximumFractionDigits: 2 });
-}
-
-function ResultsForQuery({ query }: { query: string }) {
-  const { preferences, error: validationError } = useMemo(
-    () => parsePreferences(query),
-    [query]
+  const budget = Number.isFinite(parsedBudget) ? Math.max(0, parsedBudget) : 800;
+  const groupSize = Number.isFinite(parsedGroupSize)
+    ? Math.max(1, Math.round(parsedGroupSize))
+    : 4;
+  const time = Number.isFinite(parsedTime) ? Math.max(60, parsedTime) : 360;
+  const vibeArray = useMemo(
+    () =>
+      rawVibes
+        .split(",")
+        .map((vibe: string) => vibe.trim())
+        .filter(Boolean),
+    [rawVibes]
   );
-  const [result, setResult] = useState<ResultsState>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
+
+  const vibeLabel = vibeArray
+    .map((vibe: string) => vibe.replaceAll("-", " "))
+    .join(" + ");
+
+  const [plans, setPlans] = useState<RecommendedPlan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!preferences) return;
+    const controller = new AbortController();
 
-    let cancelled = false;
-    setResult({ status: "loading" });
-
-    async function buildPlans(validPreferences: PlannerPreferences) {
+    async function loadRecommendations() {
       try {
-        const places = await loadPlaces();
-        const plans = getRecommendedPlans(validPreferences, places);
-        if (!cancelled) setResult({ status: "ready", plans });
-      } catch {
-        if (!cancelled) setResult({ status: "error" });
+        setLoading(true);
+        setError("");
+
+        const response = await fetch("/api/recommendations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location,
+            budget,
+            groupSize,
+            availableMinutes: time,
+            vibes: vibeArray,
+          }),
+          signal: controller.signal,
+        });
+
+        const data = (await response.json()) as {
+          plans?: RecommendedPlan[];
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "We could not load your DayOut options.");
+        }
+
+        setPlans(data.plans ?? []);
+      } catch (loadError) {
+        if (controller.signal.aborted) return;
+
+        console.error("Could not load recommendations:", loadError);
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "We could not load your DayOut options."
+        );
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
       }
     }
 
-    void buildPlans(preferences);
-    return () => { cancelled = true; };
-  }, [preferences, attempt]);
+    loadRecommendations();
+    return () => controller.abort();
+  }, [location, budget, groupSize, time, vibeArray]);
+
+  const planAgainHref = `/plan`;
+
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#fffaf5] px-6 text-slate-900">
+        <div className="text-center">
+          <p className="text-lg font-semibold text-[#4b2aad]">
+            Building your DayOut options...
+          </p>
+          <p className="mt-2 text-sm text-slate-500">
+            Matching real Johannesburg pilot places to your budget, time and vibe.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#fffaf5] px-6 text-slate-900">
+        <div className="max-w-md rounded-3xl bg-white p-8 text-center shadow-sm ring-1 ring-slate-100">
+          <h1 className="text-2xl font-bold text-[#4b2aad]">
+            We could not load your options
+          </h1>
+          <p className="mt-3 text-slate-600">{error}</p>
+          <p className="mt-3 text-sm text-slate-500">
+            If you are testing locally, also check that your Supabase values are in
+            <code className="mx-1 rounded bg-slate-100 px-1 py-0.5">web/.env.local</code>
+            and restart the development server.
+          </p>
+          <Link
+            href={planAgainHref}
+            className="mt-6 inline-block rounded-xl bg-[#4b2aad] px-5 py-3 font-semibold text-white"
+          >
+            Back to planner
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  if (plans.length === 0) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#fffaf5] px-6 text-slate-900">
+        <div className="max-w-md rounded-3xl bg-white p-8 text-center shadow-sm ring-1 ring-slate-100">
+          <h1 className="text-2xl font-bold text-[#4b2aad]">
+            No DayOut fits those limits yet
+          </h1>
+          <p className="mt-3 text-slate-600">
+            Try increasing the total budget or available time, or choose another vibe.
+          </p>
+          <Link
+            href={planAgainHref}
+            className="mt-6 inline-block rounded-xl bg-[#ff7a1a] px-5 py-3 font-semibold text-white"
+          >
+            Change preferences
+          </Link>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#fffaf5] px-6 py-10 text-slate-900">
@@ -114,171 +163,118 @@ function ResultsForQuery({ query }: { query: string }) {
         </p>
 
         <h1 className="mt-2 text-4xl font-bold text-[#4b2aad]">
-          {preferences ? `Plans for ${preferences.location}` : "Your DayOut plans"}
+          Plans for {location}
         </h1>
 
-        {preferences && (
-          <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-600">
-            <span className="rounded-full bg-white px-4 py-2 shadow-sm">
-              {preferences.groupSize} people
-            </span>
-            <span className="rounded-full bg-white px-4 py-2 shadow-sm">
-              R{formatAmount(preferences.budget)} total
-            </span>
-            <span className="rounded-full bg-white px-4 py-2 shadow-sm">
-              ⏱ About {formatDuration(preferences.availableMinutes)}
-            </span>
-            <span className="rounded-full bg-white px-4 py-2 shadow-sm">
-              {preferences.vibes.join(" + ") || "Any vibe"}
-            </span>
-          </div>
-        )}
+        <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-600">
+          <span className="rounded-full bg-white px-4 py-2 shadow-sm">
+            👥 {groupSize} people
+          </span>
+
+          <span className="rounded-full bg-white px-4 py-2 shadow-sm">
+            💸 R{budget.toFixed(0)} total
+          </span>
+
+          <span className="rounded-full bg-white px-4 py-2 shadow-sm">
+            ⏱ {formatMinutes(time)} available
+          </span>
+
+          <span className="rounded-full bg-white px-4 py-2 shadow-sm">
+            ✨ {vibeLabel || "Any vibe"}
+          </span>
+        </div>
 
         <p className="mt-6 max-w-2xl text-slate-600">
-          Explore South African day-out options based on your Rand budget,
-          group size, available time and vibe. Venue costs exclude transport.
-          Prices, travel times and availability are estimates for the
-          Johannesburg pilot and should be confirmed before visiting.
+          These options are generated from the Johannesburg pilot places in DayOut's
+          database. Venue prices and travel allowances are estimates and should be
+          confirmed before visiting.
         </p>
 
-        {validationError !== null ? (
-          <div role="alert" className="mt-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-            <h2 className="text-xl font-bold text-[#4b2aad]">Check your preferences</h2>
-            <p className="mt-2 text-slate-600">{validationError}</p>
-            <Link href="/plan" className="mt-4 inline-block font-semibold text-[#4b2aad] hover:underline">
-              Update my preferences
-            </Link>
-          </div>
-        ) : result.status === "loading" ? (
-          <div role="status" className="mt-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-            <p className="font-semibold text-[#4b2aad]">Finding your DayOut options...</p>
-          </div>
-        ) : result.status === "error" ? (
-          <div role="alert" className="mt-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-            <h2 className="text-xl font-bold text-[#4b2aad]">We could not load your options</h2>
-            <p className="mt-2 text-slate-600">Please try again in a moment.</p>
-            <button
-              type="button"
-              onClick={() => setAttempt((current) => current + 1)}
-              className="mt-5 rounded-xl bg-[#4b2aad] px-5 py-3 font-semibold text-white transition hover:bg-[#3d228d]"
-            >
-              Try again
-            </button>
-          </div>
-        ) : result.plans.length === 0 ? (
-          <div role="status" className="mt-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100">
-            <h2 className="text-xl font-bold text-[#4b2aad]">No matching plans yet</h2>
-            <p className="mt-2 text-slate-600">
-              Try a larger budget, more time, or different preferences.
-            </p>
-            <Link
-              href="/plan"
-              className="mt-5 inline-block rounded-xl bg-[#ff7a1a] px-5 py-3 font-semibold text-white transition hover:bg-orange-600"
-            >
-              Change my preferences
-            </Link>
-          </div>
-        ) : (
-          <div className="mt-8 grid gap-6 lg:grid-cols-3">
-            {result.plans.map((plan) => {
-              const isWithinBudget = plan.totalCost <= preferences.budget;
+        <div className="mt-8 grid gap-6 lg:grid-cols-3">
+          {plans.map((plan) => {
+            const placeIds = plan.stops.map((place) => place.id).join(",");
+            const itineraryParams = new URLSearchParams({
+              id: plan.id,
+              location,
+              budget: String(budget),
+              groupSize: String(groupSize),
+              time: String(time),
+              vibes: rawVibes,
+              places: placeIds,
+            });
 
-              return (
-                <article
-                  key={plan.id}
-                  className="flex flex-col rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100"
-                >
-                  <p className="text-sm font-semibold text-orange-500">
-                    {plan.label}
+            return (
+              <article
+                key={plan.id}
+                className="flex flex-col rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-100"
+              >
+                <p className="text-sm font-semibold text-orange-500">{plan.label}</p>
+
+                <h2 className="mt-2 text-2xl font-bold text-[#4b2aad]">
+                  {plan.title}
+                </h2>
+
+                <div className="mt-5">
+                  <p className="text-3xl font-bold text-slate-900">
+                    R{plan.totalCost.toFixed(0)}
                   </p>
-
-                  <h2 className="mt-2 text-2xl font-bold text-[#4b2aad]">
-                    {plan.title}
-                  </h2>
-
-                  <div className="mt-5">
-                    <p className="text-3xl font-bold text-slate-900">
-                      R{formatAmount(plan.totalCost)}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      R{formatAmount(plan.costPerPerson)} per person
-                    </p>
-                  </div>
-
-                  <p
-                    className={`mt-3 inline-flex w-fit rounded-full px-3 py-1 text-xs font-semibold ${
-                      isWithinBudget
-                        ? "bg-green-100 text-green-800"
-                        : "bg-orange-100 text-orange-800"
-                    }`}
-                  >
-                    {isWithinBudget ? "✓ Within your budget" : "Above your selected budget"}
+                  <p className="mt-1 text-sm text-slate-500">
+                    R{plan.costPerPerson.toFixed(0)} per person · venue estimates
                   </p>
+                </div>
 
-                  <div className="mt-5 rounded-xl bg-purple-50 p-4 text-sm text-slate-600">
-                    <p>⏱ About {formatDuration(plan.duration)} total</p>
-                    <p className="mt-2">Estimated travel: {formatDuration(plan.travelTime)}</p>
-                  </div>
+                <p className="mt-3 inline-flex w-fit rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-800">
+                  ✓ Within your budget
+                </p>
 
-                  <div className="mt-5">
-                    <p className="font-semibold text-slate-900">Your stops</p>
-                    <ol className="mt-3 space-y-2 text-sm text-slate-600">
-                      {plan.stops.map((stop, index) => (
-                        <li key={stop.id}>
-                          <span className="mr-2 font-semibold text-[#4b2aad]">
-                            {index + 1}.
+                <div className="mt-5 rounded-xl bg-purple-50 p-4 text-sm text-slate-600">
+                  <p>⏱ About {formatMinutes(plan.durationMinutes)}</p>
+                  <p className="mt-2">
+                    🚗 About {plan.travelMinutes} minutes estimated transfer time
+                  </p>
+                </div>
+
+                <div className="mt-5">
+                  <p className="font-semibold text-slate-900">Your stops</p>
+                  <ol className="mt-3 space-y-2 text-sm text-slate-600">
+                    {plan.stops.map((stop, index) => (
+                      <li key={stop.id}>
+                        <span className="mr-2 font-semibold text-[#4b2aad]">
+                          {index + 1}.
+                        </span>
+                        {stop.name}
+                        {stop.local_business ? (
+                          <span className="ml-2 rounded-full bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-700">
+                            Local
                           </span>
-                          {stop.name}
-                          {stop.local_business && (
-                            <span className="ml-2 inline-block rounded-full bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-700">
-                              Local business
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
 
-                  <div className="mt-5">
-                    <p className="font-semibold text-slate-900">Why it works</p>
-                    <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                      {plan.reasons.map((reason) => (
-                        <li key={reason}>✓ {reason}</li>
-                      ))}
-                    </ul>
-                  </div>
+                <div className="mt-5">
+                  <p className="font-semibold text-slate-900">Why it works</p>
+                  <ul className="mt-3 space-y-2 text-sm text-slate-600">
+                    {plan.reasons.map((reason) => (
+                      <li key={reason}>✓ {reason}</li>
+                    ))}
+                  </ul>
+                </div>
 
-                  <Link
-                    href={{
-                      pathname: "/itinerary",
-                      query: {
-                        id: plan.id,
-                        location: preferences.location,
-                        budget: preferences.budget,
-                        groupSize: preferences.groupSize,
-                        time: preferences.availableMinutes,
-                        vibes: preferences.vibes.join(","),
-                      },
-                    }}
-                    className="mt-8 block rounded-xl bg-[#4b2aad] px-4 py-3 text-center font-semibold text-white transition hover:bg-[#3d228d]"
-                  >
-                    View full plan
-                  </Link>
-                </article>
-              );
-            })}
-          </div>
-        )}
+                <Link
+                  href={`/itinerary?${itineraryParams.toString()}`}
+                  className="mt-8 block rounded-xl bg-[#4b2aad] px-4 py-3 text-center font-semibold text-white transition hover:bg-[#3d228d]"
+                >
+                  View full plan
+                </Link>
+              </article>
+            );
+          })}
+        </div>
       </div>
     </main>
   );
-}
-
-function ResultsContent() {
-  const searchParams = useSearchParams();
-  const query = searchParams.toString();
-  // Reset pending requests and displayed plans whenever planner inputs change.
-  return <ResultsForQuery key={query} query={query} />;
 }
 
 export default function ResultsPage() {

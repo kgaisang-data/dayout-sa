@@ -1,21 +1,16 @@
-import type { Place } from "./place";
+import type { Place } from "@/types/place";
+
+export type PlanType = "local-easy" | "budget" | "hidden-gems";
 
 export type RecommendedPlan = {
-  id: string;
+  id: PlanType;
   title: string;
   label: string;
-  /** Places in the order they will be visited. */
-  stops: Place[];
-  /** Total estimated cost for the group, in Rand. */
   totalCost: number;
-  /** Estimated cost per person, in Rand. */
   costPerPerson: number;
-  /** Total duration in minutes, including estimated travel. */
-  duration: number;
-  /** Estimated travel time between stops, in minutes. */
-  travelTime: number;
-  reasons: string[];
-  /** Group budget remaining after the total cost, in Rand. */
+  durationMinutes: number;
+  travelMinutes: number;
   remainingBudget: number;
-  score?: number;
+  stops: Place[];
+  reasons: string[];
 };
