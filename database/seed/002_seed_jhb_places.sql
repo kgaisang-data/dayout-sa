@@ -2,9 +2,6 @@
 -- Adds a source_url column, updates Wits vibes, and adds 9 Johannesburg pilot places.
 -- Safe to re-run: existing places are skipped.
 
--- 1. Add a column to record where each fact came from
-alter table public.places
-add column if not exists source_url text;
 
 -- 2. Make Wits vibe tags match the planner's vibe names
 update public.places
