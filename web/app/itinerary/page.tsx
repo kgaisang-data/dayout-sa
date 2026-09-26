@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
+import { SavePlanButton } from "@/components/save-plan-button";
+
 
 type Stop = {
   time: string;
@@ -329,8 +331,30 @@ function ItineraryContent() {
         </section>
 
         <div className="mt-8 flex flex-wrap gap-3">
+                    <SavePlanButton
+            title={selectedPlan.title}
+            plannerInput={{
+              location: searchParams.get("location") ?? "Johannesburg",
+              budget: Number(searchParams.get("budget") ?? 800),
+              groupSize,
+              availableMinutes: Number(searchParams.get("time") ?? 360),
+              vibes: (searchParams.get("vibes") ?? "")
+                .split(",")
+                .filter(Boolean),
+            }}
+            plan={{
+              planId,
+              title: selectedPlan.title,
+              stops,
+              totalCost,
+              costPerPerson: totalCost / groupSize,
+              totalTravelMinutes,
+            }}
+          />
+
           <button
             onClick={sharePlan}
+
             className="rounded-xl bg-[#ff7a1a] px-5 py-3 font-semibold text-white transition hover:bg-orange-600"
           >
             Share this plan
