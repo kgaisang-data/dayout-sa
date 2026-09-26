@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadActivePlaces, loadPlacesByIds } from "@/data/places";
+import { unstable_rethrow } from "next/navigation";
 
 export async function GET(request: NextRequest) {
   try {
@@ -24,10 +25,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ places });
   } catch (error) {
-    console.error("Places route failed:", error);
-    return NextResponse.json(
-      { error: "We could not load DayOut places right now." },
-      { status: 500 }
-    );
-  }
+  unstable_rethrow(error);
+
+  console.error("Places route failed:", error);
+
+  return NextResponse.json(
+    { error: "We could not load DayOut places right now." },
+    { status: 500 }
+  );
+}
 }
