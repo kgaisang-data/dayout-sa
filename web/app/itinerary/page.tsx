@@ -71,102 +71,162 @@ function ItineraryContent() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    const controller = new AbortController();
+  let cancelled = false;
+  async function loadItinerary() {
+    try {
+      setLoading(true);
+      setError("");
+      setMessage("");
 
-    async function loadItinerary() {
-      try {
-        setLoading(true);
-        setError("");
-        setMessage("");
+      const requestedIds = placeIdsParam
+        .split(",")
+        .map((id: string) => id.trim())
+        .filter(Boolean);
 
-        const allPlacesRequest = fetch("/api/places", {
-          signal: controller.signal,
-        }).then(async (response) => {
-          const data = (await response.json()) as { places?: Place[]; error?: string };
-          if (!response.ok) {
-            throw new Error(data.error ?? "Could not load DayOut places.");
-          }
-          return data.places ?? [];
-        });
+      let selectedStops: Place[] = [];
 
-        const requestedIds = placeIdsParam
-          .split(",")
-          .map((id: string) => id.trim())
-          .filter(Boolean);
+      // If the results page supplied exact place IDs,
+      // load those same places for the itinerary.
+      if (requestedIds.length > 0) {
+        const response = await fetch(
+          `/api/places?ids=${encodeURIComponent(
+            requestedIds.join(",")
+          )}`
+        );
 
-        let selectedStops: Place[] = [];
+        const data = (await response.json()) as {
+          places?: Place[];
+          error?: string;
+        };
 
-        if (requestedIds.length > 0) {
-          const response = await fetch(
-            `/api/places?ids=${encodeURIComponent(requestedIds.join(","))}`,
-            { signal: controller.signal }
+        if (!response.ok) {
+          throw new Error(
+            data.error ??
+              "Could not load this itinerary."
           );
-          const data = (await response.json()) as { places?: Place[]; error?: string };
-
-          if (!response.ok) {
-            throw new Error(data.error ?? "Could not load this itinerary.");
-          }
-
-          selectedStops = data.places ?? [];
-
-          if (selectedStops.length > 0 && selectedStops.length < requestedIds.length) {
-            setMessage(
-              "One saved stop is no longer available, so this plan shows the remaining active places."
-            );
-          }
         }
 
-        // Backwards-compatible fallback for an older itinerary link that did
-        // not include place IDs: regenerate the selected plan from preferences.
-        if (selectedStops.length === 0) {
-          const response = await fetch("/api/recommendations", {
+        const returnedPlaces = data.places ?? [];
+
+        // Preserve the exact order from the Results page.
+        selectedStops = requestedIds
+          .map((id) =>
+            returnedPlaces.find(
+              (place) => place.id === id
+            )
+          )
+          .filter(
+            (place): place is Place =>
+              Boolean(place)
+          );
+
+        if (
+          selectedStops.length > 0 &&
+          selectedStops.length <
+            requestedIds.length
+        ) {
+          setMessage(
+            "One stop is no longer available, so this plan shows the remaining active places."
+          );
+        }
+      }
+
+      // Support older itinerary links that do not contain
+      // the selected place IDs.
+      if (selectedStops.length === 0) {
+        const response = await fetch(
+          "/api/recommendations",
+          {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(preferences),
-            signal: controller.signal,
-          });
-          const data = (await response.json()) as {
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify(
+              preferences
+            ),
+          }
+        );
+
+        const data =
+          (await response.json()) as {
             plans?: RecommendedPlan[];
             error?: string;
           };
 
-          if (!response.ok) {
-            throw new Error(data.error ?? "Could not rebuild this itinerary.");
-          }
-
-          selectedStops =
-            data.plans?.find((plan) => plan.id === planId)?.stops ?? [];
-        }
-
-        const candidatePlaces = await allPlacesRequest;
-
-        if (selectedStops.length === 0) {
+        if (!response.ok) {
           throw new Error(
-            "This DayOut no longer has enough active places. Please create a new plan."
+            data.error ??
+              "Could not rebuild this itinerary."
           );
         }
 
-        if (!controller.signal.aborted) {
-          setStops(selectedStops);
-          setAllPlaces(candidatePlaces);
-        }
-      } catch (loadError) {
-        if (controller.signal.aborted) return;
+        selectedStops =
+          data.plans?.find(
+            (plan) =>
+              plan.id === planId
+          )?.stops ?? [];
+      }
 
-        console.error("Could not load itinerary:", loadError);
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : "We could not load this DayOut."
+      if (selectedStops.length === 0) {
+        throw new Error(
+          "This DayOut no longer has enough active places. Please create a new plan."
         );
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
+      }
+
+      // Load all active places for the Swap feature.
+      const allPlacesResponse =
+        await fetch("/api/places");
+
+      const allPlacesData =
+        (await allPlacesResponse.json()) as {
+          places?: Place[];
+          error?: string;
+        };
+
+      if (!allPlacesResponse.ok) {
+        throw new Error(
+          allPlacesData.error ??
+            "Could not load DayOut places."
+        );
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      setStops(selectedStops);
+      setAllPlaces(
+        allPlacesData.places ?? []
+      );
+    } catch (loadError) {
+      if (cancelled) {
+        return;
+      }
+
+      console.error(
+        "Could not load itinerary:",
+        loadError
+      );
+
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "We could not load this DayOut."
+      );
+    } finally {
+      if (!cancelled) {
+        setLoading(false);
       }
     }
+  }
 
-    loadItinerary();
-    return () => controller.abort();
-  }, [placeIdsParam, planId, preferences]);
+  loadItinerary();
+
+  return () => {
+    cancelled = true;
+  };
+}, [placeIdsParam, planId, preferences]);
 
   const metrics = useMemo(
     () => calculatePlanMetrics(stops, groupSize),
