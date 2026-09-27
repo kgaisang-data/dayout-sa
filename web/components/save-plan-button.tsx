@@ -22,7 +22,8 @@ export function SavePlanButton({ title, plannerInput, plan }: SavePlanButtonProp
     // Guests must log in before saving
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) {
-      router.push("/auth/login");
+      const nextPath = `${window.location.pathname}${window.location.search}`;
+      router.push(`/auth/login?next=${encodeURIComponent(nextPath)}`);
       return;
     }
 

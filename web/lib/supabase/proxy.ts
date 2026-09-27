@@ -47,15 +47,20 @@ export async function updateSession(request: NextRequest) {
   const { data } = await supabase.auth.getClaims();
   const user = data?.claims;
 
-    const protectedRoutes = ["/saved", "/protected"];
-  const isProtectedRoute = protectedRoutes.some((route) =>
-    request.nextUrl.pathname.startsWith(route)
+  const protectedRoutes = ["/saved"];
+  const isProtectedRoute = protectedRoutes.some(
+    (route) =>
+      request.nextUrl.pathname === route ||
+      request.nextUrl.pathname.startsWith(`${route}/`),
   );
 
   if (!user && isProtectedRoute) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/auth/login";
-    return NextResponse.redirect(url);
+    const loginUrl = request.nextUrl.clone();
+    const returnPath = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+    loginUrl.pathname = "/auth/login";
+    loginUrl.search = "";
+    loginUrl.searchParams.set("next", returnPath);
+    return NextResponse.redirect(loginUrl);
   }
 
   // IMPORTANT: You *must* return the supabaseResponse object as it is.

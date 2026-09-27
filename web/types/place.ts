@@ -1,17 +1,19 @@
-// DayOut place types will be defined here.
 export type Place = {
   id: string;
   name: string;
+  description: string;
   category: string;
-  estimated_cost: number;
-  duration: number;
+  area: string;
+  latitude: number | null;
+  longitude: number | null;
+  estimated_cost_per_person: number;
+  duration_minutes: number;
   vibes: string[];
-  latitude: number;
-  longitude: number;
-  location: string;
-  description?: string;
-  opening_time?: string;
-  closing_time?: string;
-  indoor_outdoor?: string;
-  image_url?: string;
+  opening_hours: Record<string, string> | null;
+  indoor: boolean;
+  local_business: boolean;
+  hidden_gem: boolean;
+  image_url: string | null;
+  source_url: string | null;
+  last_verified: string | null;
 };

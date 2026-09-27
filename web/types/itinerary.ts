@@ -1,16 +1,16 @@
-// DayOut itinerary types will be defined here.
-import type { Place } from "./place";
+import type { Place } from "@/types/place";
+
+export type PlanType = "local-easy" | "budget" | "hidden-gems";
 
 export type RecommendedPlan = {
-  id: string;
+  id: PlanType;
   title: string;
-  label?: string;
+  label: string;
   totalCost: number;
   costPerPerson: number;
-  duration: number;
-  travelTime: number;
-  stops: Place[];
+  durationMinutes: number;
+  travelMinutes: number;
   remainingBudget: number;
-  reasons?: string[];
-  score?: number;
+  stops: Place[];
+  reasons: string[];
 };

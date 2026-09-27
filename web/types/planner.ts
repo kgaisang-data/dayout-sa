@@ -1,9 +1,10 @@
-export type PlannerInput = {
+export type PlannerPreferences = {
   location: string;
   budget: number;
   groupSize: number;
-  availableHours: number;
+  availableMinutes: number;
   vibes: string[];
 };
 
-export type PlannerPreferences = PlannerInput;
+// Backwards-compatible alias used by a few existing files.
+export type PlannerInput = PlannerPreferences;
